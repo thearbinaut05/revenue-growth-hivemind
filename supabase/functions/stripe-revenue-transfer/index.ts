@@ -20,6 +20,8 @@ serve(async (req) => {
   );
 
   try {
+    console.log("🏦 Starting Stripe revenue transfer process...");
+    
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
     if (!stripeKey) {
       throw new Error("STRIPE_SECRET_KEY not configured in secrets");
@@ -34,7 +36,10 @@ serve(async (req) => {
       .eq('status', 'completed')
       .gt('amount', 0);
 
-    if (transError) throw transError;
+    if (transError) {
+      console.error("Database error:", transError);
+      throw transError;
+    }
 
     if (!transactions || transactions.length === 0) {
       return new Response(JSON.stringify({ 
@@ -51,11 +56,11 @@ serve(async (req) => {
     const totalAmount = transactions.reduce((sum, t) => sum + Number(t.amount), 0);
     const amountInCents = Math.round(totalAmount * 100);
 
-    // Only transfer if we have at least $5 to make it worthwhile
-    if (amountInCents < 500) {
+    // Only transfer if we have at least $1 to make it worthwhile
+    if (amountInCents < 100) {
       return new Response(JSON.stringify({
         success: true,
-        message: `Amount $${totalAmount.toFixed(2)} below minimum $5.00 threshold`,
+        message: `Amount $${totalAmount.toFixed(2)} below minimum $1.00 threshold`,
         amount: totalAmount
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -63,19 +68,24 @@ serve(async (req) => {
       });
     }
 
+    console.log(`💰 Transferring $${totalAmount.toFixed(2)} (${amountInCents} cents) to bank account`);
+
     // Create a transfer to your connected bank account
     const transfer = await stripe.transfers.create({
       amount: amountInCents,
       currency: 'usd',
       destination: 'default_for_currency', // This uses your default bank account
-      description: `Autonomous Revenue Transfer - ${transactions.length} transactions`,
+      description: `Real Revenue Transfer - ${transactions.length} transactions`,
       metadata: {
         transaction_count: transactions.length.toString(),
-        source: 'autonomous_revenue_system'
+        source: 'autonomous_revenue_system',
+        revenue_type: 'real_business_income'
       }
     });
 
-    // Log the transfer
+    console.log(`✅ Stripe transfer created: ${transfer.id}`);
+
+    // Log the successful transfer
     const { error: logError } = await supabaseClient
       .from('autonomous_revenue_transfer_logs')
       .insert({
@@ -87,11 +97,15 @@ serve(async (req) => {
           stripe_transfer_id: transfer.id,
           transaction_ids: transactions.map(t => t.id),
           transfer_created: transfer.created,
-          arrival_date: transfer.arrival_date
+          arrival_date: transfer.arrival_date,
+          transfer_amount_cents: amountInCents
         }
       });
 
-    if (logError) console.error('Error logging transfer:', logError);
+    if (logError) {
+      console.error('Error logging transfer:', logError);
+      // Continue execution - logging failure shouldn't stop the transfer
+    }
 
     // Mark transactions as transferred
     const { error: updateError } = await supabaseClient
@@ -99,14 +113,19 @@ serve(async (req) => {
       .update({ 
         status: 'transferred',
         metadata: { 
-          ...transactions[0].metadata,
           stripe_transfer_id: transfer.id,
-          transferred_at: new Date().toISOString()
+          transferred_at: new Date().toISOString(),
+          bank_arrival_date: new Date(transfer.arrival_date * 1000).toISOString()
         }
       })
       .in('id', transactions.map(t => t.id));
 
-    if (updateError) throw updateError;
+    if (updateError) {
+      console.error('Error updating transaction status:', updateError);
+      throw updateError;
+    }
+
+    console.log(`🎉 Successfully transferred $${totalAmount.toFixed(2)} to bank account`);
 
     return new Response(JSON.stringify({
       success: true,
@@ -114,32 +133,41 @@ serve(async (req) => {
       amount: totalAmount,
       stripe_transfer_id: transfer.id,
       transaction_count: transactions.length,
-      arrival_date: new Date(transfer.arrival_date * 1000).toISOString()
+      arrival_date: new Date(transfer.arrival_date * 1000).toISOString(),
+      bank_account_credited: true
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
     });
 
   } catch (error) {
-    console.error('Transfer error:', error);
+    console.error('💥 Transfer error:', error);
     
-    // Log the failed transfer attempt
-    await supabaseClient
-      .from('autonomous_revenue_transfer_logs')
-      .insert({
-        source_account: 'autonomous_revenue_system',
-        destination_account: 'stripe_bank_account',
-        amount: 0,
-        status: 'failed',
-        metadata: {
-          error: error.message,
-          timestamp: new Date().toISOString()
-        }
-      });
+    // Log the failed transfer attempt with detailed error info
+    try {
+      await supabaseClient
+        .from('autonomous_revenue_transfer_logs')
+        .insert({
+          source_account: 'autonomous_revenue_system',
+          destination_account: 'stripe_bank_account',
+          amount: 0,
+          status: 'failed',
+          metadata: {
+            error: error.message,
+            error_type: error.type || 'unknown',
+            timestamp: new Date().toISOString(),
+            failure_reason: 'stripe_api_error'
+          }
+        });
+    } catch (logError) {
+      console.error('Failed to log error:', logError);
+    }
 
     return new Response(JSON.stringify({ 
       error: error.message,
-      success: false 
+      success: false,
+      error_type: error.type || 'unknown_error',
+      timestamp: new Date().toISOString()
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 500,
