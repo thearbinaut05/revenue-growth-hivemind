@@ -27,7 +27,7 @@ serve(async (req) => {
 
     const stripe = new Stripe(stripeKey, { apiVersion: "2023-10-16" });
 
-    // Get all pending revenue transactions
+    // Get all completed revenue transactions that haven't been transferred
     const { data: transactions, error: transError } = await supabaseClient
       .from('autonomous_revenue_transactions')
       .select('*')

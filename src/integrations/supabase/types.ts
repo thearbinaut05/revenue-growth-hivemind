@@ -475,30 +475,42 @@ export type Database = {
       autonomous_revenue_transactions: {
         Row: {
           amount: number
+          contract_liability: number | null
           created_at: string | null
           currency: string | null
           id: string
           metadata: Json | null
+          performance_obligation_satisfied: boolean | null
+          revenue_recognition_date: string | null
           status: string
           stream_id: string
+          transaction_price_allocated: number | null
         }
         Insert: {
           amount: number
+          contract_liability?: number | null
           created_at?: string | null
           currency?: string | null
           id?: string
           metadata?: Json | null
+          performance_obligation_satisfied?: boolean | null
+          revenue_recognition_date?: string | null
           status?: string
           stream_id: string
+          transaction_price_allocated?: number | null
         }
         Update: {
           amount?: number
+          contract_liability?: number | null
           created_at?: string | null
           currency?: string | null
           id?: string
           metadata?: Json | null
+          performance_obligation_satisfied?: boolean | null
+          revenue_recognition_date?: string | null
           status?: string
           stream_id?: string
+          transaction_price_allocated?: number | null
         }
         Relationships: [
           {
