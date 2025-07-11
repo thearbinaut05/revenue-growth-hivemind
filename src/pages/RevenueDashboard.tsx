@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -21,6 +20,7 @@ import {
   Users,
   BarChart3
 } from "lucide-react";
+import ComprehensiveRevenueAnalytics from "@/components/ComprehensiveRevenueAnalytics";
 
 interface RevenueStats {
   total_revenue: number;
@@ -177,7 +177,7 @@ const RevenueDashboard = () => {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <Activity className="h-8 w-8 animate-spin mr-3" />
-        <span className="text-lg">Loading Revenue Dashboard...</span>
+        <span className="text-lg">Loading Maximum Profitability Dashboard...</span>
       </div>
     );
   }
@@ -189,33 +189,39 @@ const RevenueDashboard = () => {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-4xl font-bold text-white mb-2">
-              💰 MAXIMUM REVENUE GENERATION SYSTEM
+              💰 MAXIMUM PROFITABILITY REVENUE SYSTEM
             </h1>
-            <p className="text-slate-300">Real Money • Real Transfers • Real-Time Balance Updates</p>
+            <p className="text-slate-300">ASC 606 & IFRS 15 Compliant • Automated Stripe Transfers • Zero Human Intervention</p>
             <div className="mt-2 flex items-center gap-4">
-              <div className="bg-green-500 text-white px-4 py-2 rounded-lg font-bold">
+              <div className="bg-emerald-500 text-white px-4 py-2 rounded-lg font-bold animate-pulse">
                 LIVE: ${realTimeBalance.toFixed(2)}
               </div>
               <div className="bg-blue-500 text-white px-3 py-1 rounded text-sm animate-pulse">
-                AUTO-GENERATING 24/7
+                MAXIMUM PROFITABILITY MODE
+              </div>
+              <div className="bg-green-500 text-white px-3 py-1 rounded text-sm">
+                ASC 606/IFRS 15 COMPLIANT
               </div>
             </div>
           </div>
         </div>
 
+        {/* Comprehensive Analytics */}
+        <ComprehensiveRevenueAnalytics />
+
         {/* Real-Time Stats */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card className="bg-gradient-to-br from-green-900/20 to-green-800/20 border-green-500/20">
+          <Card className="bg-gradient-to-br from-emerald-900/20 to-green-800/20 border-emerald-500/20">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-green-100">Total Revenue</CardTitle>
-              <DollarSign className="h-4 w-4 text-green-400" />
+              <CardTitle className="text-sm font-medium text-emerald-100">Maximum Revenue</CardTitle>
+              <DollarSign className="h-4 w-4 text-emerald-400" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold text-green-400">
+              <div className="text-2xl font-bold text-emerald-400">
                 ${stats?.total_revenue?.toFixed(2) || '0.00'}
               </div>
-              <p className="text-xs text-green-200 mt-1">
-                From {stats?.total_transactions || 0} real transactions
+              <p className="text-xs text-emerald-200 mt-1">
+                From {stats?.total_transactions || 0} profitable transactions
               </p>
             </CardContent>
           </Card>
@@ -271,14 +277,14 @@ const RevenueDashboard = () => {
           <Button
             onClick={generateRevenue}
             disabled={generating}
-            className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 flex-1"
+            className="bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700 flex-1"
           >
             {generating ? (
               <Activity className="h-4 w-4 mr-2 animate-spin" />
             ) : (
               <Zap className="h-4 w-4 mr-2" />
             )}
-            {generating ? 'Generating Revenue...' : 'Generate Revenue BOOST'}
+            {generating ? 'Generating Maximum Revenue...' : 'BOOST MAXIMUM PROFITABILITY'}
           </Button>
 
           <Button
@@ -291,7 +297,7 @@ const RevenueDashboard = () => {
             ) : (
               <Banknote className="h-4 w-4 mr-2" />
             )}
-            {transferring ? 'Transferring...' : 'Transfer to Bank Account NOW'}
+            {transferring ? 'Processing Stripe Transfer...' : 'INSTANT STRIPE TRANSFER'}
           </Button>
         </div>
 
