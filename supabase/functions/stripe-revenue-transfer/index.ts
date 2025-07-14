@@ -18,8 +18,10 @@ serve(async (req) => {
     { auth: { persistSession: false } }
   );
 
+  const executionId = `transfer_${Date.now()}`;
+
   try {
-    console.log("🏦 Starting comprehensive Stripe revenue transfer process...");
+    console.log(`[${executionId}] 🏦 Starting application balance transfer process...`);
     
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
     if (!stripeKey) {
@@ -40,39 +42,27 @@ serve(async (req) => {
       typescript: true 
     });
 
-    // Get application balance
-    const { data: appBalance } = await supabaseClient
+    // Get application balance only - simpler approach
+    const { data: appBalance, error: balanceError } = await supabaseClient
       .from('application_balance')
       .select('*')
       .single();
 
-    // Get all completed revenue transactions that haven't been transferred
-    const { data: transactions, error: transError } = await supabaseClient
-      .from('autonomous_revenue_transactions')
-      .select('*')
-      .eq('status', 'completed')
-      .eq('performance_obligation_satisfied', true)
-      .gt('amount', 0);
-
-    if (transError) {
-      console.error("Database error:", transError);
-      throw transError;
+    if (balanceError) {
+      console.error(`[${executionId}] Error getting application balance:`, balanceError);
+      throw new Error(`Database error: ${balanceError.message}`);
     }
 
-    // Calculate total transferable amount
-    const transactionTotal = (transactions || []).reduce((sum, t) => sum + Number(t.amount), 0);
-    const balanceAmount = appBalance?.balance_amount || 0;
-    const totalTransferAmount = transactionTotal + balanceAmount;
+    const balanceAmount = Number(appBalance?.balance_amount || 0);
+    console.log(`[${executionId}] 💰 Application balance: $${balanceAmount.toFixed(2)}`);
 
-    console.log(`💰 Total transferable amount: $${totalTransferAmount.toFixed(2)} (Transactions: $${transactionTotal.toFixed(2)}, Balance: $${balanceAmount.toFixed(2)})`);
-
-    if (totalTransferAmount < 5) {
-      console.log("Amount below $5 minimum transfer threshold");
+    if (balanceAmount < 5) {
+      console.log(`[${executionId}] Amount below $5 minimum transfer threshold`);
       return new Response(JSON.stringify({ 
         success: true, 
-        message: `Transfer amount $${totalTransferAmount.toFixed(2)} is below $5 minimum threshold`,
+        message: `Transfer amount $${balanceAmount.toFixed(2)} is below $5 minimum threshold`,
         amount: 0,
-        available_amount: totalTransferAmount,
+        available_amount: balanceAmount,
         threshold_not_met: true
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -80,163 +70,175 @@ serve(async (req) => {
       });
     }
 
-    console.log(`💰 Processing comprehensive transfer of $${totalTransferAmount.toFixed(2)} from ${(transactions || []).length} transactions plus application balance`);
+    console.log(`[${executionId}] 🚀 Processing transfer of $${balanceAmount.toFixed(2)} from application balance`);
 
-    // Get current Stripe account balance for transparency
-    let stripeBalance;
-    try {
-      stripeBalance = await stripe.balance.retrieve();
-      console.log("📊 Current Stripe balance:", stripeBalance.available);
-    } catch (error) {
-      console.error("Error retrieving Stripe balance:", error);
-      stripeBalance = { available: [] };
-    }
+    // Log transfer attempt BEFORE creating Stripe payout
+    const transferId = crypto.randomUUID();
+    await supabaseClient
+      .from('transfer_attempts')
+      .insert({
+        id: transferId,
+        amount: Math.round(balanceAmount * 100), // Convert to cents
+        currency: 'usd',
+        description: `Application balance transfer: $${balanceAmount.toFixed(2)}`,
+        status: 'processing',
+        metadata: {
+          execution_id: executionId,
+          source: 'application_balance',
+          amount_usd: balanceAmount,
+          timestamp: new Date().toISOString()
+        }
+      });
 
-    // Create comprehensive Stripe transfer with detailed ASC 606/IFRS 15 metadata
-    const amountInCents = Math.round(totalTransferAmount * 100);
+    // Create Stripe payout
+    const amountInCents = Math.round(balanceAmount * 100);
+    let payout;
     
-    console.log(`Creating comprehensive Stripe transfer for $${totalTransferAmount.toFixed(2)} (${amountInCents} cents)`);
+    try {
+      payout = await stripe.payouts.create({
+        amount: amountInCents,
+        currency: 'usd',
+        method: 'standard',
+        description: `Application Balance Transfer - $${balanceAmount.toFixed(2)}`,
+        metadata: {
+          execution_id: executionId,
+          source: 'application_balance',
+          amount_usd: balanceAmount.toString(),
+          timestamp: new Date().toISOString(),
+          transfer_id: transferId
+        }
+      });
 
-    const payout = await stripe.payouts.create({
-      amount: amountInCents,
-      currency: 'usd',
-      method: 'standard',
-      description: `Comprehensive ASC 606/IFRS 15 compliant revenue payout: $${totalTransferAmount.toFixed(2)} from ${(transactions || []).length} transactions + application balance`,
-      metadata: {
-        transaction_count: (transactions || []).length.toString(),
-        total_amount: totalTransferAmount.toString(),
-        transaction_revenue: transactionTotal.toString(),
-        balance_amount: balanceAmount.toString(),
-        transfer_date: new Date().toISOString(),
-        compliance_framework: 'ASC_606_IFRS_15_COMPLIANT',
-        performance_obligations: 'SATISFIED',
-        revenue_recognition: 'COMPLETE',
-        contract_liability: '0',
-        transaction_price_allocated: totalTransferAmount.toString(),
-        autonomous_system: 'true',
-        human_intervention: 'none',
-        transparency_level: 'maximum',
-        audit_trail: 'complete'
-      }
-    });
-
-    console.log(`✅ Comprehensive Stripe payout created: ${payout.id} for $${totalTransferAmount.toFixed(2)}`);
-
-    // Mark transactions as transferred with compliance data
-    if (transactions && transactions.length > 0) {
-      const transactionIds = transactions.map(t => t.id);
+      console.log(`[${executionId}] ✅ Stripe payout created: ${payout.id}`);
       
-      const { error: updateError } = await supabaseClient
-        .from('autonomous_revenue_transactions')
-        .update({ 
-          status: 'transferred',
+      // Update transfer attempt with success
+      await supabaseClient
+        .from('transfer_attempts')
+        .update({
+          stripe_transfer_id: payout.id,
+          status: 'completed',
           metadata: {
+            execution_id: executionId,
+            source: 'application_balance',
+            amount_usd: balanceAmount,
+            timestamp: new Date().toISOString(),
             stripe_payout_id: payout.id,
-            transferred_at: new Date().toISOString(),
-            compliance_verified: true,
-            asc_606_compliant: true,
-            ifrs_15_compliant: true,
-            performance_obligation_satisfied: true,
-            revenue_recognition_complete: true,
-            transparency_verified: true
+            arrival_date: new Date(payout.arrival_date * 1000).toISOString()
           }
         })
-        .in('id', transactionIds);
+        .eq('id', transferId);
 
-      if (updateError) {
-        console.error("Error updating transaction status:", updateError);
-        throw updateError;
-      }
-    }
-
-    // Reset application balance to 0 with compliance tracking
-    if (balanceAmount > 0) {
-      const { error: balanceError } = await supabaseClient
-        .from('application_balance')
-        .update({ 
-          balance_amount: 0,
-          pending_transfers: 0,
-          last_updated_at: new Date().toISOString()
+    } catch (stripeError: any) {
+      console.error(`[${executionId}] ❌ Stripe payout failed:`, stripeError);
+      
+      // Log the failed transfer
+      await supabaseClient
+        .from('transfer_attempts')
+        .update({
+          status: 'failed',
+          error_code: stripeError.code || 'unknown_error',
+          error_message: stripeError.message,
+          retry_count: 1,
+          metadata: {
+            execution_id: executionId,
+            source: 'application_balance',
+            amount_usd: balanceAmount,
+            timestamp: new Date().toISOString(),
+            error_type: stripeError.type,
+            error_code: stripeError.code
+          }
         })
-        .eq('id', 1);
+        .eq('id', transferId);
 
-      if (balanceError) {
-        console.error("Error resetting application balance:", balanceError);
-      }
+      throw new Error(`Stripe payout failed: ${stripeError.message}`);
     }
 
-    // Log comprehensive payout with maximum transparency
+    // Reset application balance to 0
+    const { error: balanceUpdateError } = await supabaseClient
+      .from('application_balance')
+      .update({ 
+        balance_amount: 0,
+        pending_transfers: 0,
+        last_updated_at: new Date().toISOString()
+      })
+      .eq('id', appBalance.id);
+
+    if (balanceUpdateError) {
+      console.error(`[${executionId}] Error resetting application balance:`, balanceUpdateError);
+    }
+
+    // Log successful transfer
     const { error: logError } = await supabaseClient
-      .from('autonomous_revenue_transfer_logs')
+      .from('automated_transfer_logs')
       .insert({
-        source_account: 'comprehensive_revenue_system',
-        destination_account: 'stripe_bank_account',
-        amount: totalTransferAmount,
+        job_name: 'application_balance_transfer',
         status: 'completed',
-        metadata: {
+        execution_time: new Date().toISOString(),
+        response: {
+          execution_id: executionId,
           stripe_payout_id: payout.id,
-          transaction_count: (transactions || []).length,
-          transaction_revenue: transactionTotal,
-          balance_amount: balanceAmount,
-          transfer_date: new Date().toISOString(),
-          arrival_date: new Date(payout.arrival_date * 1000).toISOString(),
-          compliance_framework: 'ASC_606_IFRS_15',
-          compliance_verified: true,
-          performance_obligations_satisfied: true,
-          revenue_recognition_complete: true,
-          transparency_level: 'maximum',
-          stripe_balance_before: stripeBalance,
-          automation_complete: true,
-          human_intervention_required: false,
-          audit_trail_complete: true
+          amount_transferred: balanceAmount,
+          transfer_id: transferId,
+          balance_before: balanceAmount,
+          balance_after: 0,
+          arrival_date: new Date(payout.arrival_date * 1000).toISOString()
         }
       });
 
     if (logError) {
-      console.error("Error logging comprehensive transfer:", logError);
+      console.error(`[${executionId}] Error logging transfer:`, logError);
     }
 
-    console.log(`🎉 Successfully completed comprehensive transfer of $${totalTransferAmount.toFixed(2)} to Stripe bank account!`);
+    console.log(`[${executionId}] 🎉 Successfully transferred $${balanceAmount.toFixed(2)} to Stripe bank account!`);
 
     return new Response(JSON.stringify({
       success: true,
-      message: `Successfully transferred $${totalTransferAmount.toFixed(2)} to your Stripe connected bank account with full ASC 606/IFRS 15 compliance`,
-      amount: totalTransferAmount,
-      transaction_revenue: transactionTotal,
-      balance_amount: balanceAmount,
+      message: `Successfully transferred $${balanceAmount.toFixed(2)} from application balance to your bank account`,
+      amount: balanceAmount,
       stripe_payout_id: payout.id,
-      transaction_count: (transactions || []).length,
-      compliance_verified: true,
-      asc_606_compliant: true,
-      ifrs_15_compliant: true,
-      performance_obligations_satisfied: true,
-      revenue_recognition_complete: true,
-      transparency_verified: true,
-      stripe_balance: stripeBalance?.available || [],
+      transfer_id: transferId,
       payout_details: {
+        id: payout.id,
+        amount: balanceAmount,
         amount_cents: amountInCents,
         currency: 'usd',
-        method: 'standard',
+        method: payout.method,
         arrival_date: new Date(payout.arrival_date * 1000).toISOString(),
-        description: payout.description,
-        metadata: payout.metadata
+        description: payout.description
       },
-      automation_complete: true,
-      human_intervention_required: false
+      execution_id: executionId,
+      automation_complete: true
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
     });
 
-  } catch (error) {
-    console.error('💥 Comprehensive transfer error:', error);
+  } catch (error: any) {
+    console.error(`[${executionId}] 💥 Transfer failed:`, error);
     
+    // Log error
+    await supabaseClient
+      .from('automated_transfer_logs')
+      .insert({
+        job_name: 'application_balance_transfer',
+        status: 'failed',
+        execution_time: new Date().toISOString(),
+        error_message: error.message,
+        response: {
+          execution_id: executionId,
+          error_type: error.name || 'UnknownError',
+          error_message: error.message,
+          timestamp: new Date().toISOString()
+        }
+      });
+
     return new Response(JSON.stringify({ 
       success: false,
       error: error.message,
-      error_type: error.type || 'unknown_error',
+      error_type: error.name || 'UnknownError',
+      execution_id: executionId,
       timestamp: new Date().toISOString(),
-      message: "Comprehensive transfer failed. Please check your Stripe configuration and try again.",
+      message: "Application balance transfer failed. Please check your Stripe configuration and try again.",
       troubleshooting: {
         check_stripe_secret: "Verify STRIPE_SECRET_KEY is configured in Edge Function secrets",
         check_stripe_account: "Ensure your Stripe account is properly set up with bank details",

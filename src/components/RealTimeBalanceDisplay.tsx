@@ -13,7 +13,8 @@ import {
   CreditCard,
   Activity,
   CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Wrench
 } from "lucide-react";
 
 interface BalanceData {
@@ -112,6 +113,29 @@ const RealTimeBalanceDisplay = () => {
     }
   };
 
+  const fixFailedTransfers = async () => {
+    try {
+      toast.info('🔧 Checking and fixing failed transfers...');
+      const { data, error } = await supabase.functions.invoke('fix-failed-transfers');
+      
+      if (error) throw error;
+      
+      if (data?.success) {
+        if (data.fixed > 0) {
+          toast.success(`✅ Fixed ${data.fixed} failed transfers! Total recovered: $${(data.total_amount_recovered / 100).toFixed(2)}`);
+        } else {
+          toast.info('✨ No failed transfers found to fix - everything looks good!');
+        }
+        await loadBalances();
+      } else {
+        toast.error(data?.message || 'Failed to fix transfers');
+      }
+    } catch (error) {
+      console.error('Fix failed transfers error:', error);
+      toast.error('Failed to run transfer fix workflow');
+    }
+  };
+
   if (loading) {
     return (
       <Card className="bg-slate-800/50 border-slate-700">
@@ -137,6 +161,15 @@ const RealTimeBalanceDisplay = () => {
           >
             <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh
+          </Button>
+          <Button
+            onClick={fixFailedTransfers}
+            variant="outline"
+            size="sm"
+            className="bg-orange-700 border-orange-600 hover:bg-orange-600"
+          >
+            <Wrench className="h-4 w-4 mr-2" />
+            Fix Failed
           </Button>
           <Button
             onClick={executeTransfer}
