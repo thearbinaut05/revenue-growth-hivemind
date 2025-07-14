@@ -75,7 +75,7 @@ const RealTimeBalanceDisplay = () => {
         total_revenue: totalRevenue,
         last_updated: new Date().toISOString(),
         stripe_available: stripeBalanceData?.available || [],
-        transfer_ready: (applicationBalance + totalRevenue) >= 5
+        transfer_ready: applicationBalance >= 5  // Only check application balance, not total revenue
       });
 
     } catch (error) {
@@ -270,7 +270,7 @@ const RealTimeBalanceDisplay = () => {
             <div>
               <p className="text-slate-400 text-sm">Next Transfer Amount</p>
               <p className="text-white font-semibold">
-                ${((balances?.application_balance || 0) + (balances?.total_revenue || 0)).toFixed(2)}
+                ${(balances?.application_balance || 0).toFixed(2)}
               </p>
             </div>
             <div>
