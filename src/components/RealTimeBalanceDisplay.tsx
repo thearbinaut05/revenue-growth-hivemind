@@ -68,6 +68,9 @@ const RealTimeBalanceDisplay = () => {
         console.log('Stripe balance check not available yet');
       }
 
+      // Calculate total transferable amount (application balance + revenue)
+      const totalTransferAmount = applicationBalance + totalRevenue;
+
       setBalances({
         application_balance: applicationBalance,
         stripe_balance: stripeBalanceData?.balance || 0,
@@ -75,7 +78,7 @@ const RealTimeBalanceDisplay = () => {
         total_revenue: totalRevenue,
         last_updated: new Date().toISOString(),
         stripe_available: stripeBalanceData?.available || [],
-        transfer_ready: applicationBalance >= 5  // Only check application balance, not total revenue
+        transfer_ready: totalTransferAmount >= 5  // Check combined amount
       });
 
     } catch (error) {
@@ -95,19 +98,48 @@ const RealTimeBalanceDisplay = () => {
   const executeTransfer = async () => {
     setTransferring(true);
     try {
+      // Step 1: Move revenue to application balance if there's revenue
+      if (balances?.total_revenue && balances.total_revenue > 0) {
+        toast.info('📊 Step 1: Moving revenue to application balance...');
+        
+        // Insert revenue into application balance
+        const { error: revenueTransferError } = await supabase
+          .from('application_balance')
+          .update({ 
+            balance_amount: (balances.application_balance || 0) + balances.total_revenue,
+            last_updated_at: new Date().toISOString()
+          })
+          .eq('id', 1);
+
+        if (revenueTransferError) {
+          throw new Error(`Failed to move revenue: ${revenueTransferError.message}`);
+        }
+
+        // Mark revenue transactions as transferred
+        await supabase
+          .from('autonomous_revenue_transactions')
+          .update({ status: 'transferred' })
+          .eq('status', 'completed');
+      }
+
+      // Step 2: Transfer from application balance to bank
+      toast.info('🏦 Step 2: Transferring to bank account...');
       const { data, error } = await supabase.functions.invoke('stripe-revenue-transfer');
       
       if (error) throw error;
       
       if (data?.success) {
-        toast.success(`🏦 Successfully transferred $${data.amount?.toFixed(2)} to your bank account!`);
+        toast.success(`🎉 Successfully transferred $${data.amount?.toFixed(2)} to your bank account!`);
         await loadBalances();
+      } else if (data?.balance_unchanged) {
+        toast.error(data?.message || 'Transfer failed - balance unchanged');
       } else {
         toast.info(data?.message || 'No funds available for transfer');
       }
     } catch (error) {
       console.error('Transfer error:', error);
       toast.error('Transfer failed - please check your Stripe configuration');
+      await loadBalances(); // Refresh to show current state
     } finally {
       setTransferring(false);
     }
@@ -268,9 +300,12 @@ const RealTimeBalanceDisplay = () => {
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
-              <p className="text-slate-400 text-sm">Next Transfer Amount</p>
+              <p className="text-slate-400 text-sm">Total Transfer Amount</p>
               <p className="text-white font-semibold">
-                ${(balances?.application_balance || 0).toFixed(2)}
+                ${((balances?.application_balance || 0) + (balances?.total_revenue || 0)).toFixed(2)}
+              </p>
+              <p className="text-xs text-slate-500">
+                App: ${(balances?.application_balance || 0).toFixed(2)} + Revenue: ${(balances?.total_revenue || 0).toFixed(2)}
               </p>
             </div>
             <div>
