@@ -21,7 +21,6 @@ import {
   BarChart3
 } from "lucide-react";
 import ComprehensiveRevenueAnalytics from "@/components/ComprehensiveRevenueAnalytics";
-import RealTimeBalanceDisplay from "@/components/RealTimeBalanceDisplay";
 
 interface RevenueStats {
   total_revenue: number;
@@ -206,9 +205,6 @@ const RevenueDashboard = () => {
             </div>
           </div>
         </div>
-
-        {/* Real-Time Balance Display */}
-        <RealTimeBalanceDisplay />
 
         {/* Comprehensive Analytics */}
         <ComprehensiveRevenueAnalytics />
