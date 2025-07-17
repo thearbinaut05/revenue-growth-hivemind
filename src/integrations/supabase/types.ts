@@ -2168,6 +2168,39 @@ export type Database = {
         }
         Relationships: []
       }
+      stripe_destinations: {
+        Row: {
+          account_id: string
+          account_type: string | null
+          capabilities: Json | null
+          created_at: string | null
+          currency: string
+          id: string
+          is_active: boolean | null
+          updated_at: string | null
+        }
+        Insert: {
+          account_id: string
+          account_type?: string | null
+          capabilities?: Json | null
+          created_at?: string | null
+          currency: string
+          id?: string
+          is_active?: boolean | null
+          updated_at?: string | null
+        }
+        Update: {
+          account_id?: string
+          account_type?: string | null
+          capabilities?: Json | null
+          created_at?: string | null
+          currency?: string
+          id?: string
+          is_active?: boolean | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       stripe_integration: {
         Row: {
           created_at: string
@@ -2446,6 +2479,60 @@ export type Database = {
         }
         Relationships: []
       }
+      transfer_attempts: {
+        Row: {
+          amount: number
+          corrected_at: string | null
+          corrected_transfer_id: string | null
+          correction_error: string | null
+          created_at: string | null
+          currency: string
+          description: string | null
+          destination: string | null
+          error_code: string | null
+          error_message: string | null
+          id: string
+          metadata: Json | null
+          retry_count: number | null
+          status: string | null
+          stripe_transfer_id: string | null
+        }
+        Insert: {
+          amount: number
+          corrected_at?: string | null
+          corrected_transfer_id?: string | null
+          correction_error?: string | null
+          created_at?: string | null
+          currency?: string
+          description?: string | null
+          destination?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          metadata?: Json | null
+          retry_count?: number | null
+          status?: string | null
+          stripe_transfer_id?: string | null
+        }
+        Update: {
+          amount?: number
+          corrected_at?: string | null
+          corrected_transfer_id?: string | null
+          correction_error?: string | null
+          created_at?: string | null
+          currency?: string
+          description?: string | null
+          destination?: string | null
+          error_code?: string | null
+          error_message?: string | null
+          id?: string
+          metadata?: Json | null
+          retry_count?: number | null
+          status?: string | null
+          stripe_transfer_id?: string | null
+        }
+        Relationships: []
+      }
       transfer_verification_codes: {
         Row: {
           amount: number
@@ -2650,6 +2737,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      workflow_runs: {
+        Row: {
+          completed_at: string | null
+          error_message: string | null
+          execution_time_ms: number | null
+          failed_fixes: number | null
+          id: string
+          metadata: Json | null
+          started_at: string | null
+          success_rate: number | null
+          successful_fixes: number | null
+          total_amount_recovered: number | null
+          total_processed: number | null
+          workflow_type: string
+        }
+        Insert: {
+          completed_at?: string | null
+          error_message?: string | null
+          execution_time_ms?: number | null
+          failed_fixes?: number | null
+          id?: string
+          metadata?: Json | null
+          started_at?: string | null
+          success_rate?: number | null
+          successful_fixes?: number | null
+          total_amount_recovered?: number | null
+          total_processed?: number | null
+          workflow_type: string
+        }
+        Update: {
+          completed_at?: string | null
+          error_message?: string | null
+          execution_time_ms?: number | null
+          failed_fixes?: number | null
+          id?: string
+          metadata?: Json | null
+          started_at?: string | null
+          success_rate?: number | null
+          successful_fixes?: number | null
+          total_amount_recovered?: number | null
+          total_processed?: number | null
+          workflow_type?: string
+        }
+        Relationships: []
       }
     }
     Views: {
@@ -3041,6 +3173,22 @@ export type Database = {
           movements: Json
         }[]
       }
+      get_failed_transfers_for_fix: {
+        Args: Record<PropertyKey, never>
+        Returns: {
+          transfer_id: string
+          stripe_transfer_id: string
+          amount: number
+          currency: string
+          description: string
+          destination: string
+          error_code: string
+          error_message: string
+          metadata: Json
+          created_at: string
+          retry_count: number
+        }[]
+      }
       get_revenue_by_day: {
         Args: { start_date: string; end_date: string }
         Returns: {
@@ -3114,6 +3262,14 @@ export type Database = {
         }
         Returns: undefined
       }
+      mark_transfer_corrected: {
+        Args: {
+          original_id: string
+          new_stripe_id: string
+          corrected_destination: string
+        }
+        Returns: boolean
+      }
       monetize_application_balance: {
         Args: Record<PropertyKey, never>
         Returns: {
@@ -3158,6 +3314,10 @@ export type Database = {
         Returns: undefined
       }
       parallel_revenue_processor: {
+        Args: Record<PropertyKey, never>
+        Returns: Json
+      }
+      process_application_balance_transfer: {
         Args: Record<PropertyKey, never>
         Returns: Json
       }
