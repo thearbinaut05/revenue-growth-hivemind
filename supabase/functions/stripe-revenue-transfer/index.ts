@@ -7,11 +7,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
-
 // Retry configuration
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY = 1000; // 1 second
@@ -21,12 +16,6 @@ const getRetryDelay = (attempt: number) => INITIAL_RETRY_DELAY * Math.pow(2, att
 
 // Sleep utility
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-// Email notification function (placeholder)
-async function sendFailureNotification(email: string, subject: string, message: string) {
-  // TODO: Implement actual email sending logic here using an email service or SMTP
-  console.log(`Sending failure notification to ${email} with subject "${subject}" and message: ${message}`);
-}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -129,7 +118,7 @@ serve(async (req) => {
         transfer = await stripe.transfers.create({
           amount: amountInCents,
           currency: 'usd',
-          destination: 'acct_1RGs3rD6CDwEP7C7', // Updated to user's Stripe account ID
+          destination: 'default_for_currency', // This sends to your default bank account
           description: `Application Balance Transfer - $${currentAppBalance.toFixed(2)}`,
           metadata: {
             execution_id: executionId,
@@ -177,9 +166,8 @@ serve(async (req) => {
           console.log(`[${executionId}] ⏳ Waiting ${delay}ms before retry...`);
           await sleep(delay);
           continue; // Retry
-      } else {
+        } else {
           // Final attempt failed or non-retryable error
-          // TODO: Add alerting logic here to notify admin/user about failed transfer attempts
           break;
         }
       }
