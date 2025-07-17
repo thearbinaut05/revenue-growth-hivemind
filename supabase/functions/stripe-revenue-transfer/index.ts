@@ -11,11 +11,32 @@ const corsHeaders = {
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY = 1000; // 1 second
 
+// Stripe API limits and requirements
+const STRIPE_LIMITS = {
+  MIN_TRANSFER_AMOUNT: 50, // $0.50 in cents (Stripe minimum)
+  MAX_TRANSFER_AMOUNT: 100000000, // $1,000,000 in cents (reasonable max)
+  DESTINATION_ACCOUNT: 'acct_1RGs3rD6CDwEP7C7'
+};
+
 // Exponential backoff delay
 const getRetryDelay = (attempt: number) => INITIAL_RETRY_DELAY * Math.pow(2, attempt);
 
 // Sleep utility
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+// Validate transfer amount against Stripe requirements
+const validateTransferAmount = (amountCents: number) => {
+  if (amountCents < STRIPE_LIMITS.MIN_TRANSFER_AMOUNT) {
+    return { valid: false, error: `Transfer amount $${(amountCents / 100).toFixed(2)} is below Stripe minimum of $0.50` };
+  }
+  if (amountCents > STRIPE_LIMITS.MAX_TRANSFER_AMOUNT) {
+    return { valid: false, error: `Transfer amount $${(amountCents / 100).toFixed(2)} exceeds maximum of $1,000,000` };
+  }
+  if (!Number.isInteger(amountCents) || amountCents <= 0) {
+    return { valid: false, error: `Invalid transfer amount: ${amountCents} cents` };
+  }
+  return { valid: true };
+};
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -31,7 +52,7 @@ serve(async (req) => {
   const executionId = `transfer_${Date.now()}`;
 
   try {
-    console.log(`[${executionId}] 🏦 Starting application balance to bank transfer process...`);
+    console.log(`[${executionId}] 🏦 Starting completed revenue to bank transfer process...`);
     
     // 1. Validate Stripe configuration
     const stripeKey = Deno.env.get("STRIPE_SECRET_KEY");
@@ -53,60 +74,69 @@ serve(async (req) => {
       typescript: true 
     });
 
-    // 2. Get application balance (DO NOT deduct yet)
-    const { data: appBalance, error: appBalanceError } = await supabaseClient
-      .from('application_balance')
-      .select('*')
+    // 2. Get completed revenue balance (DO NOT deduct yet)
+    const { data: revenueData, error: revenueError } = await supabaseClient
+      .from('completed_revenue')
+      .select('total_amount')
       .single();
 
-    if (appBalanceError) {
-      console.error(`[${executionId}] Error getting application balance:`, appBalanceError);
-      throw new Error(`Database error: ${appBalanceError.message}`);
+    if (revenueError) {
+      console.error(`[${executionId}] Error getting completed revenue:`, revenueError);
+      throw new Error(`Database error: ${revenueError.message}`);
     }
 
-    const currentAppBalance = Number(appBalance?.balance_amount || 0);
-    console.log(`[${executionId}] 💰 Application balance: $${currentAppBalance.toFixed(2)} (NOT deducted yet)`);
+    const totalRevenueAmount = Number(revenueData?.total_amount || 0);
+    console.log(`[${executionId}] 💰 Total completed revenue: $${totalRevenueAmount.toFixed(2)} (NOT deducted yet)`);
 
-    // 3. Validate application has sufficient balance
-    if (currentAppBalance < 5) {
-      console.log(`[${executionId}] Application balance below $5 minimum transfer threshold`);
+    // 3. Convert to cents and validate amount
+    const amountInCents = Math.round(totalRevenueAmount * 100);
+    
+    const validation = validateTransferAmount(amountInCents);
+    if (!validation.valid) {
+      console.log(`[${executionId}] ❌ Transfer amount validation failed: ${validation.error}`);
       return new Response(JSON.stringify({ 
-        success: true, 
-        message: `Application balance $${currentAppBalance.toFixed(2)} is below $5 minimum threshold`,
-        amount: 0,
-        available_amount: currentAppBalance,
-        threshold_not_met: true
+        success: false, 
+        error: validation.error,
+        amount: totalRevenueAmount,
+        amount_cents: amountInCents,
+        stripe_requirements: {
+          minimum_usd: STRIPE_LIMITS.MIN_TRANSFER_AMOUNT / 100,
+          maximum_usd: STRIPE_LIMITS.MAX_TRANSFER_AMOUNT / 100,
+          destination_account: STRIPE_LIMITS.DESTINATION_ACCOUNT
+        },
+        validation_failed: true
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
-        status: 200,
+        status: 400,
       });
     }
 
-    console.log(`[${executionId}] 🚀 Starting transfer process for $${currentAppBalance.toFixed(2)}`);
+    console.log(`[${executionId}] 🚀 Starting transfer process for $${totalRevenueAmount.toFixed(2)} (${amountInCents} cents)`);
 
-    // Log transfer attempt
+    // 4. Log transfer attempt
     const transferId = crypto.randomUUID();
     await supabaseClient
       .from('transfer_attempts')
       .insert({
         id: transferId,
-        amount: Math.round(currentAppBalance * 100),
+        amount: amountInCents,
         currency: 'usd',
-        description: `Application balance to bank transfer: $${currentAppBalance.toFixed(2)}`,
+        description: `Completed revenue to bank transfer: $${totalRevenueAmount.toFixed(2)}`,
         status: 'processing',
         metadata: {
           execution_id: executionId,
-          source: 'application_balance',
-          amount_usd: currentAppBalance,
+          source: 'completed_revenue',
+          amount_usd: totalRevenueAmount,
+          amount_cents: amountInCents,
+          destination_account: STRIPE_LIMITS.DESTINATION_ACCOUNT,
           timestamp: new Date().toISOString(),
-          flow: 'application_to_bank'
+          flow: 'revenue_to_bank'
         }
       });
 
-    // 4. Attempt Stripe transfer using Transfer API WITH RETRY LOGIC
-    console.log(`[${executionId}] 🏦 Attempting Stripe transfer to bank account (with retry logic)...`);
+    // 5. Attempt Stripe transfer to specific destination WITH RETRY LOGIC
+    console.log(`[${executionId}] 🏦 Attempting Stripe transfer to ${STRIPE_LIMITS.DESTINATION_ACCOUNT} (with retry logic)...`);
     
-    const amountInCents = Math.round(currentAppBalance * 100);
     let transfer;
     let lastError;
 
@@ -118,16 +148,17 @@ serve(async (req) => {
         transfer = await stripe.transfers.create({
           amount: amountInCents,
           currency: 'usd',
-          destination: 'default_for_currency', // This sends to your default bank account
-          description: `Application Balance Transfer - $${currentAppBalance.toFixed(2)}`,
+          destination: STRIPE_LIMITS.DESTINATION_ACCOUNT,
+          description: `Completed Revenue Transfer - $${totalRevenueAmount.toFixed(2)}`,
           metadata: {
             execution_id: executionId,
-            source: 'application_balance',
-            amount_usd: currentAppBalance.toString(),
+            source: 'completed_revenue',
+            amount_usd: totalRevenueAmount.toString(),
+            amount_cents: amountInCents.toString(),
             timestamp: new Date().toISOString(),
             transfer_id: transferId,
             attempt: (attempt + 1).toString(),
-            flow: 'application_to_bank'
+            flow: 'revenue_to_bank'
           }
         });
 
@@ -154,7 +185,9 @@ serve(async (req) => {
           errorCode === 'insufficient_funds' ||
           errorCode === 'account_invalid' ||
           errorCode === 'invalid_request_error' ||
-          errorCode === 'authentication_error';
+          errorCode === 'authentication_error' ||
+          errorCode === 'account_deactivated' ||
+          errorCode === 'transfers_not_allowed';
 
         if (isNonRetryableError) {
           console.error(`[${executionId}] 🚫 Non-retryable error detected: ${errorCode}`);
@@ -186,19 +219,21 @@ serve(async (req) => {
           error_message: lastError?.message || 'Unknown error',
           metadata: {
             execution_id: executionId,
-            source: 'application_balance',
-            amount_usd: currentAppBalance,
+            source: 'completed_revenue',
+            amount_usd: totalRevenueAmount,
+            amount_cents: amountInCents,
+            destination_account: STRIPE_LIMITS.DESTINATION_ACCOUNT,
             timestamp: new Date().toISOString(),
             error_type: lastError?.type,
             error_code: lastError?.code,
-            flow: 'application_to_bank',
+            flow: 'revenue_to_bank',
             retries_attempted: MAX_RETRIES + 1,
             final_error: lastError?.message
           }
         })
         .eq('id', transferId);
 
-      // Return error response with specific error handling guidance
+      // Return error response - BALANCE UNCHANGED
       return new Response(JSON.stringify({ 
         success: false,
         error: lastError?.message || 'Transfer failed after all retries',
@@ -207,17 +242,19 @@ serve(async (req) => {
         execution_id: executionId,
         retries_attempted: MAX_RETRIES + 1,
         timestamp: new Date().toISOString(),
-        message: "Transfer to bank account failed. Application balance unchanged.",
+        message: "Transfer to bank account failed. Revenue balance unchanged.",
         balance_unchanged: true,
-        available_balance: currentAppBalance,
+        available_revenue: totalRevenueAmount,
+        destination_account: STRIPE_LIMITS.DESTINATION_ACCOUNT,
         troubleshooting: {
-          insufficient_funds: lastError?.code === 'insufficient_funds' ? "Your Stripe account has insufficient funds" : null,
-          invalid_destination: lastError?.code === 'account_invalid' ? "Check your Stripe account bank details configuration" : null,
+          insufficient_funds: lastError?.code === 'insufficient_funds' ? "Your Stripe account has insufficient funds for this transfer" : null,
+          invalid_destination: lastError?.code === 'account_invalid' ? "Destination account may be invalid or deactivated" : null,
+          transfers_not_allowed: lastError?.code === 'transfers_not_allowed' ? "Transfers not allowed to this destination account" : null,
           rate_limits: lastError?.code === 'rate_limit' ? "Stripe API rate limit reached, try again later" : null,
           network_timeout: lastError?.type === 'api_connection_error' ? "Network connectivity issue, check connection" : null,
           check_stripe_secret: "Verify STRIPE_SECRET_KEY is configured correctly",
-          check_stripe_account: "Ensure Stripe account has bank details configured",
-          minimum_amount: "Transfers require minimum $5.00"
+          check_destination_account: `Verify destination account ${STRIPE_LIMITS.DESTINATION_ACCOUNT} is valid and active`,
+          minimum_amount: `Transfers require minimum $${STRIPE_LIMITS.MIN_TRANSFER_AMOUNT / 100}`
         }
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -225,24 +262,97 @@ serve(async (req) => {
       });
     }
 
-    // 5. ON SUCCESS: Deduct amount from application's internal balance
-    console.log(`[${executionId}] 💰 SUCCESS: Deducting $${currentAppBalance.toFixed(2)} from application balance`);
-    
-    const { error: balanceUpdateError } = await supabaseClient
-      .from('application_balance')
-      .update({ 
-        balance_amount: 0, // Reset to zero after successful transfer
-        pending_transfers: 0,
-        last_updated_at: new Date().toISOString()
-      })
-      .eq('id', appBalance.id);
+    // 6. Verify transfer was actually created successfully
+    if (!transfer.id || transfer.amount !== amountInCents) {
+      console.error(`[${executionId}] ⚠️ Transfer validation failed - ID: ${transfer.id}, Amount: ${transfer.amount} vs Expected: ${amountInCents}`);
+      
+      await supabaseClient
+        .from('transfer_attempts')
+        .update({
+          status: 'failed',
+          error_code: 'transfer_validation_failed',
+          error_message: 'Transfer created but validation failed',
+          metadata: {
+            execution_id: executionId,
+            source: 'completed_revenue',
+            amount_usd: totalRevenueAmount,
+            amount_cents: amountInCents,
+            destination_account: STRIPE_LIMITS.DESTINATION_ACCOUNT,
+            timestamp: new Date().toISOString(),
+            flow: 'revenue_to_bank',
+            transfer_id: transfer.id,
+            transfer_amount: transfer.amount,
+            expected_amount: amountInCents,
+            validation_error: 'Amount or ID mismatch'
+          }
+        })
+        .eq('id', transferId);
 
-    if (balanceUpdateError) {
-      console.error(`[${executionId}] ⚠️  CRITICAL: Transfer succeeded but failed to update balance:`, balanceUpdateError);
-      // This is critical but don't fail the request since money was transferred
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Transfer validation failed',
+        message: "Transfer may have been created but validation failed. Revenue balance unchanged.",
+        balance_unchanged: true,
+        stripe_transfer_id: transfer.id,
+        execution_id: executionId
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500,
+      });
     }
 
-    // Update transfer attempt with success
+    // 7. SUCCESS: Reset completed revenue balance ONLY after successful transfer
+    console.log(`[${executionId}] 💰 SUCCESS: Resetting completed revenue balance after successful transfer`);
+    
+    const { error: balanceResetError } = await supabaseClient
+      .from('completed_revenue')
+      .update({ 
+        total_amount: 0,
+        last_transferred_at: new Date().toISOString(),
+        last_transfer_amount: totalRevenueAmount,
+        last_transfer_id: transfer.id
+      });
+
+    if (balanceResetError) {
+      console.error(`[${executionId}] ⚠️ CRITICAL: Transfer succeeded but failed to reset revenue balance:`, balanceResetError);
+      
+      // Log this critical error but don't fail the request since money was transferred
+      await supabaseClient
+        .from('transfer_attempts')
+        .update({
+          status: 'transfer_success_balance_error',
+          error_message: 'Transfer succeeded but balance reset failed',
+          metadata: {
+            execution_id: executionId,
+            source: 'completed_revenue',
+            amount_usd: totalRevenueAmount,
+            amount_cents: amountInCents,
+            destination_account: STRIPE_LIMITS.DESTINATION_ACCOUNT,
+            timestamp: new Date().toISOString(),
+            stripe_transfer_id: transfer.id,
+            flow: 'revenue_to_bank',
+            balance_reset_error: balanceResetError.message,
+            critical_error: true
+          }
+        })
+        .eq('id', transferId);
+
+      return new Response(JSON.stringify({ 
+        success: false,
+        error: 'Transfer succeeded but balance reset failed',
+        message: "CRITICAL: Money was transferred but revenue balance was not reset. Manual intervention required.",
+        stripe_transfer_id: transfer.id,
+        transfer_amount: totalRevenueAmount,
+        balance_reset_failed: true,
+        execution_id: executionId,
+        requires_manual_intervention: true
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 500,
+      });
+    }
+
+    // 8. Update transfer attempt with complete success
     await supabaseClient
       .from('transfer_attempts')
       .update({
@@ -250,60 +360,73 @@ serve(async (req) => {
         status: 'completed',
         metadata: {
           execution_id: executionId,
-          source: 'application_balance',
-          amount_usd: currentAppBalance,
+          source: 'completed_revenue',
+          amount_usd: totalRevenueAmount,
+          amount_cents: amountInCents,
+          destination_account: STRIPE_LIMITS.DESTINATION_ACCOUNT,
           timestamp: new Date().toISOString(),
           stripe_transfer_id: transfer.id,
-          flow: 'application_to_bank',
-          application_balance_before: currentAppBalance,
-          application_balance_after: 0
+          flow: 'revenue_to_bank',
+          revenue_balance_before: totalRevenueAmount,
+          revenue_balance_after: 0,
+          balance_reset_successful: true
         }
       })
       .eq('id', transferId);
 
-    // Log successful transfer
+    // 9. Log successful transfer
     await supabaseClient
       .from('automated_transfer_logs')
       .insert({
-        job_name: 'application_to_bank_transfer',
+        job_name: 'completed_revenue_to_bank_transfer',
         status: 'completed',
         execution_time: new Date().toISOString(),
         response: {
           execution_id: executionId,
           stripe_transfer_id: transfer.id,
-          amount_transferred: currentAppBalance,
+          amount_transferred: totalRevenueAmount,
+          amount_cents: amountInCents,
+          destination_account: STRIPE_LIMITS.DESTINATION_ACCOUNT,
           transfer_id: transferId,
-          application_balance_before: currentAppBalance,
-          application_balance_after: 0,
-          flow: 'application_to_bank'
+          revenue_balance_before: totalRevenueAmount,
+          revenue_balance_after: 0,
+          flow: 'revenue_to_bank'
         }
       });
 
     console.log(`[${executionId}] 🎉 Transfer completed successfully!`);
-    console.log(`[${executionId}] 📊 Application balance reset to $0.00 after $${currentAppBalance.toFixed(2)} transfer`);
+    console.log(`[${executionId}] 📊 Revenue balance reset to $0.00 after $${totalRevenueAmount.toFixed(2)} transfer`);
 
     return new Response(JSON.stringify({
       success: true,
-      message: `Successfully transferred $${currentAppBalance.toFixed(2)} from application balance to your bank account`,
-      amount: currentAppBalance,
+      message: `Successfully transferred $${totalRevenueAmount.toFixed(2)} from completed revenue to bank account`,
+      amount: totalRevenueAmount,
+      amount_cents: amountInCents,
       stripe_transfer_id: transfer.id,
       transfer_id: transferId,
+      destination_account: STRIPE_LIMITS.DESTINATION_ACCOUNT,
       transfer_details: {
         id: transfer.id,
-        amount: currentAppBalance,
+        amount: totalRevenueAmount,
         amount_cents: amountInCents,
         currency: 'usd',
         destination: transfer.destination,
-        description: transfer.description
+        description: transfer.description,
+        created: transfer.created
       },
       balance_changes: {
-        application_balance: {
-          before: currentAppBalance,
+        completed_revenue: {
+          before: totalRevenueAmount,
           after: 0
         }
       },
       execution_id: executionId,
-      flow: 'application_to_bank'
+      flow: 'revenue_to_bank',
+      stripe_compliance: {
+        minimum_met: amountInCents >= STRIPE_LIMITS.MIN_TRANSFER_AMOUNT,
+        maximum_check: amountInCents <= STRIPE_LIMITS.MAX_TRANSFER_AMOUNT,
+        amount_validated: true
+      }
     }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
       status: 200,
@@ -316,7 +439,7 @@ serve(async (req) => {
     await supabaseClient
       .from('automated_transfer_logs')
       .insert({
-        job_name: 'application_to_bank_transfer',
+        job_name: 'completed_revenue_to_bank_transfer',
         status: 'failed',
         execution_time: new Date().toISOString(),
         error_message: error.message,
@@ -325,7 +448,7 @@ serve(async (req) => {
           error_type: error.name || 'UnknownError',
           error_message: error.message,
           timestamp: new Date().toISOString(),
-          flow: 'application_to_bank'
+          flow: 'revenue_to_bank'
         }
       });
 
@@ -335,13 +458,15 @@ serve(async (req) => {
       error_type: error.name || 'UnknownError',
       execution_id: executionId,
       timestamp: new Date().toISOString(),
-      message: "Application balance to bank transfer failed. Check logs for details.",
+      message: "Completed revenue to bank transfer failed. Check logs for details.",
       balance_unchanged: true,
+      destination_account: STRIPE_LIMITS.DESTINATION_ACCOUNT,
       troubleshooting: {
         check_stripe_secret: "Verify STRIPE_SECRET_KEY is configured correctly",
-        check_stripe_account: "Ensure Stripe account has bank details configured",
-        check_balance: "Verify sufficient application balance exists",
-        minimum_amount: "Transfers require minimum $5.00",
+        check_destination_account: `Verify destination account ${STRIPE_LIMITS.DESTINATION_ACCOUNT} is valid and active`,
+        check_revenue_balance: "Verify sufficient completed revenue exists",
+        minimum_amount: `Transfers require minimum $${STRIPE_LIMITS.MIN_TRANSFER_AMOUNT / 100}`,
+        maximum_amount: `Transfers cannot exceed $${STRIPE_LIMITS.MAX_TRANSFER_AMOUNT / 100}`,
         check_logs: "Review transfer_attempts table for detailed error info"
       }
     }), {
