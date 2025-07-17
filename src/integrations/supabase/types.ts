@@ -3329,10 +3329,6 @@ export type Database = {
         Args: { request_id: string }
         Returns: Json
       }
-      process_failed_transfers_and_payouts: {
-        Args: Record<PropertyKey, never>
-        Returns: Json
-      }
       process_revenue_recognition_and_transfer: {
         Args: Record<PropertyKey, never>
         Returns: Json
@@ -3348,10 +3344,6 @@ export type Database = {
       process_storage_billing: {
         Args: Record<PropertyKey, never>
         Returns: Json
-      }
-      reconcile_balance_transfers: {
-        Args: Record<PropertyKey, never>
-        Returns: undefined
       }
       record_and_send_to_stripe: {
         Args: {
@@ -3427,10 +3419,6 @@ export type Database = {
         Returns: Json
       }
       scale_vm_resources: {
-        Args: Record<PropertyKey, never>
-        Returns: undefined
-      }
-      schedule_balance_transfer_reconciliation: {
         Args: Record<PropertyKey, never>
         Returns: undefined
       }
