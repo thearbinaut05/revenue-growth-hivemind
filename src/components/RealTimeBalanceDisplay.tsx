@@ -75,7 +75,7 @@ const RealTimeBalanceDisplay = () => {
         total_revenue: totalRevenue,
         last_updated: new Date().toISOString(),
         stripe_available: stripeBalanceData?.available || [],
-        transfer_ready: (applicationBalance + totalRevenue) >= 5  // Check combined amount
+        transfer_ready: (applicationBalance + totalRevenue) >= 5
       });
 
     } catch (error) {
