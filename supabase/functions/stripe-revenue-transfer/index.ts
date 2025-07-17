@@ -42,7 +42,7 @@ serve(async (req) => {
       typescript: true 
     });
 
-    // Get application balance only - simpler approach
+    // Get application balance AND total revenue from transactions
     const { data: appBalance, error: balanceError } = await supabaseClient
       .from('application_balance')
       .select('*')
@@ -53,8 +53,24 @@ serve(async (req) => {
       throw new Error(`Database error: ${balanceError.message}`);
     }
 
-    const balanceAmount = Number(appBalance?.balance_amount || 0);
-    console.log(`[${executionId}] 💰 Application balance: $${balanceAmount.toFixed(2)}`);
+    // Get total revenue from completed transactions
+    const { data: transactions, error: transactionError } = await supabaseClient
+      .from('autonomous_revenue_transactions')
+      .select('amount, status')
+      .eq('status', 'completed');
+
+    if (transactionError) {
+      console.error(`[${executionId}] Error getting revenue transactions:`, transactionError);
+      throw new Error(`Transaction error: ${transactionError.message}`);
+    }
+
+    const applicationBalance = Number(appBalance?.balance_amount || 0);
+    const totalRevenue = (transactions || []).reduce((sum, t) => sum + Number(t.amount), 0);
+    const balanceAmount = applicationBalance + totalRevenue;
+    
+    console.log(`[${executionId}] 💰 Application balance: $${applicationBalance.toFixed(2)}`);
+    console.log(`[${executionId}] 💰 Total revenue: $${totalRevenue.toFixed(2)}`);
+    console.log(`[${executionId}] 💰 Combined transfer amount: $${balanceAmount.toFixed(2)}`);
 
     if (balanceAmount < 5) {
       console.log(`[${executionId}] Amount below $5 minimum transfer threshold`);
@@ -70,7 +86,7 @@ serve(async (req) => {
       });
     }
 
-    console.log(`[${executionId}] 🚀 Processing transfer of $${balanceAmount.toFixed(2)} from application balance`);
+    console.log(`[${executionId}] 🚀 Processing transfer of $${balanceAmount.toFixed(2)} (App: $${applicationBalance.toFixed(2)} + Revenue: $${totalRevenue.toFixed(2)})`);
 
     // Log transfer attempt BEFORE creating Stripe payout
     const transferId = crypto.randomUUID();
@@ -80,11 +96,13 @@ serve(async (req) => {
         id: transferId,
         amount: Math.round(balanceAmount * 100), // Convert to cents
         currency: 'usd',
-        description: `Application balance transfer: $${balanceAmount.toFixed(2)}`,
+        description: `Combined balance transfer: App $${applicationBalance.toFixed(2)} + Revenue $${totalRevenue.toFixed(2)} = $${balanceAmount.toFixed(2)}`,
         status: 'processing',
         metadata: {
           execution_id: executionId,
-          source: 'application_balance',
+          source: 'combined_balance_revenue',
+          application_balance: applicationBalance,
+          total_revenue: totalRevenue,
           amount_usd: balanceAmount,
           timestamp: new Date().toISOString()
         }
@@ -99,10 +117,12 @@ serve(async (req) => {
         amount: amountInCents,
         currency: 'usd',
         method: 'standard',
-        description: `Application Balance Transfer - $${balanceAmount.toFixed(2)}`,
+        description: `Combined Balance Transfer - App: $${applicationBalance.toFixed(2)} + Revenue: $${totalRevenue.toFixed(2)} = $${balanceAmount.toFixed(2)}`,
         metadata: {
           execution_id: executionId,
-          source: 'application_balance',
+          source: 'combined_balance_revenue',
+          application_balance: applicationBalance,
+          total_revenue: totalRevenue,
           amount_usd: balanceAmount.toString(),
           timestamp: new Date().toISOString(),
           transfer_id: transferId
@@ -119,7 +139,9 @@ serve(async (req) => {
           status: 'completed',
           metadata: {
             execution_id: executionId,
-            source: 'application_balance',
+            source: 'combined_balance_revenue',
+            application_balance: applicationBalance,
+            total_revenue: totalRevenue,
             amount_usd: balanceAmount,
             timestamp: new Date().toISOString(),
             stripe_payout_id: payout.id,
@@ -141,7 +163,9 @@ serve(async (req) => {
           retry_count: 1,
           metadata: {
             execution_id: executionId,
-            source: 'application_balance',
+            source: 'combined_balance_revenue',
+            application_balance: applicationBalance,
+            total_revenue: totalRevenue,
             amount_usd: balanceAmount,
             timestamp: new Date().toISOString(),
             error_type: stripeError.type,
@@ -153,7 +177,7 @@ serve(async (req) => {
       throw new Error(`Stripe payout failed: ${stripeError.message}`);
     }
 
-    // Reset application balance to 0
+    // Reset application balance to 0 AND mark revenue transactions as transferred
     const { error: balanceUpdateError } = await supabaseClient
       .from('application_balance')
       .update({ 
@@ -167,6 +191,23 @@ serve(async (req) => {
       console.error(`[${executionId}] Error resetting application balance:`, balanceUpdateError);
     }
 
+    // Mark all completed revenue transactions as transferred
+    const { error: revenueUpdateError } = await supabaseClient
+      .from('autonomous_revenue_transactions')
+      .update({ 
+        status: 'transferred',
+        metadata: {
+          transferred_at: new Date().toISOString(),
+          stripe_payout_id: payout.id,
+          transfer_id: transferId
+        }
+      })
+      .eq('status', 'completed');
+
+    if (revenueUpdateError) {
+      console.error(`[${executionId}] Error marking revenue as transferred:`, revenueUpdateError);
+    }
+
     // Log successful transfer
     const { error: logError } = await supabaseClient
       .from('automated_transfer_logs')
@@ -178,9 +219,12 @@ serve(async (req) => {
           execution_id: executionId,
           stripe_payout_id: payout.id,
           amount_transferred: balanceAmount,
+          application_balance: applicationBalance,
+          total_revenue: totalRevenue,
           transfer_id: transferId,
-          balance_before: balanceAmount,
-          balance_after: 0,
+          balance_before: applicationBalance,
+          revenue_before: totalRevenue,
+          combined_amount: balanceAmount,
           arrival_date: new Date(payout.arrival_date * 1000).toISOString()
         }
       });
@@ -189,11 +233,11 @@ serve(async (req) => {
       console.error(`[${executionId}] Error logging transfer:`, logError);
     }
 
-    console.log(`[${executionId}] 🎉 Successfully transferred $${balanceAmount.toFixed(2)} to Stripe bank account!`);
+    console.log(`[${executionId}] 🎉 Successfully transferred $${balanceAmount.toFixed(2)} (App: $${applicationBalance.toFixed(2)} + Revenue: $${totalRevenue.toFixed(2)}) to Stripe bank account!`);
 
     return new Response(JSON.stringify({
       success: true,
-      message: `Successfully transferred $${balanceAmount.toFixed(2)} from application balance to your bank account`,
+      message: `Successfully transferred $${balanceAmount.toFixed(2)} (App: $${applicationBalance.toFixed(2)} + Revenue: $${totalRevenue.toFixed(2)}) from your account to bank`,
       amount: balanceAmount,
       stripe_payout_id: payout.id,
       transfer_id: transferId,
