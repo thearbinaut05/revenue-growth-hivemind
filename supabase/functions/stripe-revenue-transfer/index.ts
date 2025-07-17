@@ -97,11 +97,11 @@ serve(async (req) => {
     
     console.log(`Creating comprehensive Stripe transfer for $${totalTransferAmount.toFixed(2)} (${amountInCents} cents)`);
 
-    const payout = await stripe.payouts.create({
+    const transfer = await stripe.transfers.create({
       amount: amountInCents,
       currency: 'usd',
-      method: 'standard',
-      description: `Comprehensive ASC 606/IFRS 15 compliant revenue payout: $${totalTransferAmount.toFixed(2)} from ${(transactions || []).length} transactions + application balance`,
+      destination: 'default_for_currency',
+      description: `Comprehensive ASC 606/IFRS 15 compliant revenue transfer: $${totalTransferAmount.toFixed(2)} from ${(transactions || []).length} transactions + application balance`,
       metadata: {
         transaction_count: (transactions || []).length.toString(),
         total_amount: totalTransferAmount.toString(),
@@ -120,7 +120,7 @@ serve(async (req) => {
       }
     });
 
-    console.log(`✅ Comprehensive Stripe payout created: ${payout.id} for $${totalTransferAmount.toFixed(2)}`);
+    console.log(`✅ Comprehensive Stripe transfer created: ${transfer.id} for $${totalTransferAmount.toFixed(2)}`);
 
     // Mark transactions as transferred with compliance data
     if (transactions && transactions.length > 0) {
@@ -131,7 +131,7 @@ serve(async (req) => {
         .update({ 
           status: 'transferred',
           metadata: {
-            stripe_payout_id: payout.id,
+            stripe_transfer_id: transfer.id,
             transferred_at: new Date().toISOString(),
             compliance_verified: true,
             asc_606_compliant: true,
@@ -165,7 +165,7 @@ serve(async (req) => {
       }
     }
 
-    // Log comprehensive payout with maximum transparency
+    // Log comprehensive transfer with maximum transparency
     const { error: logError } = await supabaseClient
       .from('autonomous_revenue_transfer_logs')
       .insert({
@@ -174,12 +174,12 @@ serve(async (req) => {
         amount: totalTransferAmount,
         status: 'completed',
         metadata: {
-          stripe_payout_id: payout.id,
+          stripe_transfer_id: transfer.id,
           transaction_count: (transactions || []).length,
           transaction_revenue: transactionTotal,
           balance_amount: balanceAmount,
           transfer_date: new Date().toISOString(),
-          arrival_date: new Date(payout.arrival_date * 1000).toISOString(),
+          arrival_date: new Date(transfer.arrival_date * 1000).toISOString(),
           compliance_framework: 'ASC_606_IFRS_15',
           compliance_verified: true,
           performance_obligations_satisfied: true,
@@ -204,7 +204,7 @@ serve(async (req) => {
       amount: totalTransferAmount,
       transaction_revenue: transactionTotal,
       balance_amount: balanceAmount,
-      stripe_payout_id: payout.id,
+      stripe_transfer_id: transfer.id,
       transaction_count: (transactions || []).length,
       compliance_verified: true,
       asc_606_compliant: true,
@@ -213,13 +213,13 @@ serve(async (req) => {
       revenue_recognition_complete: true,
       transparency_verified: true,
       stripe_balance: stripeBalance?.available || [],
-      payout_details: {
+      transfer_details: {
         amount_cents: amountInCents,
         currency: 'usd',
-        method: 'standard',
-        arrival_date: new Date(payout.arrival_date * 1000).toISOString(),
-        description: payout.description,
-        metadata: payout.metadata
+        destination: 'default_for_currency',
+        arrival_date: new Date(transfer.arrival_date * 1000).toISOString(),
+        description: transfer.description,
+        metadata: transfer.metadata
       },
       automation_complete: true,
       human_intervention_required: false

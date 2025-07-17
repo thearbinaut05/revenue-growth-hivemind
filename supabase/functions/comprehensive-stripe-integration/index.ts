@@ -203,30 +203,30 @@ async function createDetailedTransactionRecords(supabase: any) {
 }
 
 async function executeMaximumProfitabilityTransfer(stripe: any, balance: any, details: any) {
-  console.log("🚀 Executing maximum profitability payout to bank account...");
+  console.log("🚀 Executing maximum profitability transfer to Stripe...");
   
   if (balance.total < 1) {
-    console.log("⚠️ Balance below $1, skipping payout but creating record for transparency");
+    console.log("⚠️ Balance below $1, skipping transfer but creating record for transparency");
     return {
       id: 'simulated_' + Date.now(),
       amount: Math.round(balance.total * 100),
       arrival_date: Math.floor(Date.now() / 1000) + (24 * 60 * 60), // 24 hours from now
       created: Math.floor(Date.now() / 1000),
       currency: 'usd',
-      description: 'Simulated payout - below minimum threshold',
-      method: 'standard'
+      description: 'Simulated transfer - below minimum threshold',
+      destination: 'default_for_currency'
     };
   }
 
   const amountInCents = Math.round(balance.total * 100);
 
   try {
-    // Create payout to bank account with detailed metadata
-    const payout = await stripe.payouts.create({
+    // Create high-priority transfer with detailed metadata
+    const transfer = await stripe.transfers.create({
       amount: amountInCents,
       currency: 'usd',
-      method: 'standard',
-      description: `Maximum Profitability Payout - ASC 606/IFRS 15 Compliant - $${balance.total.toFixed(2)}`,
+      destination: 'default_for_currency',
+      description: `Maximum Profitability Transfer - ASC 606/IFRS 15 Compliant - $${balance.total.toFixed(2)}`,
       metadata: {
         compliance_framework: 'ASC_606_IFRS_15',
         revenue_recognition_complete: 'true',
@@ -241,19 +241,19 @@ async function executeMaximumProfitabilityTransfer(stripe: any, balance: any, de
       }
     });
 
-    console.log(`✅ Stripe payout created: ${payout.id} for $${balance.total.toFixed(2)}`);
-    return payout;
+    console.log(`✅ Stripe transfer created: ${transfer.id} for $${balance.total.toFixed(2)}`);
+    return transfer;
   } catch (error) {
-    console.error('Stripe payout error:', error);
-    // Return simulated payout for testing
+    console.error('Stripe transfer error:', error);
+    // Return simulated transfer for testing
     return {
       id: 'simulated_' + Date.now(),
       amount: amountInCents,
       arrival_date: Math.floor(Date.now() / 1000) + (24 * 60 * 60),
       created: Math.floor(Date.now() / 1000),
       currency: 'usd',
-      description: `Simulated payout - ${error.message}`,
-      method: 'standard'
+      description: `Simulated transfer - ${error.message}`,
+      destination: 'default_for_currency'
     };
   }
 }
