@@ -104,36 +104,6 @@ export type Database = {
         }
         Relationships: []
       }
-      automated_transfer_logs: {
-        Row: {
-          created_at: string
-          error_message: string | null
-          execution_time: string
-          id: string
-          job_name: string
-          response: Json | null
-          status: string
-        }
-        Insert: {
-          created_at?: string
-          error_message?: string | null
-          execution_time?: string
-          id?: string
-          job_name: string
-          response?: Json | null
-          status: string
-        }
-        Update: {
-          created_at?: string
-          error_message?: string | null
-          execution_time?: string
-          id?: string
-          job_name?: string
-          response?: Json | null
-          status?: string
-        }
-        Relationships: []
-      }
       autonomous_agents: {
         Row: {
           agent_name: string
