@@ -2,3 +2,6 @@ project_id = "tqbybefpnwxukzqkanip"
 
 [functions.aggregate-usd-to-stripe]
 verify_jwt = true
+
+[functions.payout-now]
+verify_jwt = true

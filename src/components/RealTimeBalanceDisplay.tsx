@@ -228,6 +228,30 @@ const RealTimeBalanceDisplay = () => {
             Aggregate & Transfer USD
           </Button>
           <Button
+            onClick={async () => {
+              try {
+                toast.info('Creating Stripe payout to your bank...');
+                const { data, error } = await supabase.functions.invoke('payout-now', { body: {} });
+                if (error) throw error;
+                if (data?.success) {
+                  toast.success(data.message || 'Payout created');
+                  await loadBalances();
+                } else {
+                  toast.error(data?.message || 'Payout failed');
+                }
+              } catch (e) {
+                console.error(e);
+                toast.error('Payout failed. Check Edge Function logs.');
+              }
+            }}
+            variant="outline"
+            size="sm"
+            className="bg-green-700 border-green-600 hover:bg-green-600"
+          >
+            <ArrowUpRight className="h-4 w-4 mr-2" />
+            Payout to Bank
+          </Button>
+          <Button
             onClick={executeTransfer}
             disabled={transferring || !balances?.transfer_ready}
             className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
