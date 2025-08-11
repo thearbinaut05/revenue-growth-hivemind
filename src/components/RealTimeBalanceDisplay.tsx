@@ -204,6 +204,30 @@ const RealTimeBalanceDisplay = () => {
             Fix Failed
           </Button>
           <Button
+            onClick={async () => {
+              try {
+                toast.info('Aggregating USD across tables and transferring from Stripe...');
+                const { data, error } = await supabase.functions.invoke('aggregate-usd-to-stripe', { body: {} });
+                if (error) throw error;
+                if (data?.success) {
+                  toast.success(data.message || 'Aggregate transfer completed');
+                  await loadBalances();
+                } else {
+                  toast.error(data?.message || 'Aggregate transfer failed');
+                }
+              } catch (e) {
+                console.error(e);
+                toast.error('Aggregate transfer failed. Check Edge Function logs.');
+              }
+            }}
+            variant="outline"
+            size="sm"
+            className="bg-teal-700 border-teal-600 hover:bg-teal-600"
+          >
+            <ArrowUpRight className="h-4 w-4 mr-2" />
+            Aggregate & Transfer USD
+          </Button>
+          <Button
             onClick={executeTransfer}
             disabled={transferring || !balances?.transfer_ready}
             className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
