@@ -45,7 +45,7 @@ const RealTimeBalanceDisplay = () => {
       const { data: appBalance } = await supabase
         .from('application_balance')
         .select('*')
-        .single();
+        .maybeSingle();
 
       // Get total revenue from completed transactions
       const { data: transactions } = await supabase
