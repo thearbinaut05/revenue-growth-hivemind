@@ -7,237 +7,194 @@ import { Progress } from "@/components/ui/progress";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { 
-  Zap, 
   TrendingUp, 
+  Zap, 
   Target, 
-  Settings, 
   BarChart3,
+  Settings,
+  ArrowUpRight,
+  DollarSign,
   Activity,
-  AlertTriangle,
-  CheckCircle
+  Loader2
 } from "lucide-react";
 
-interface OptimizationHistory {
-  id: string;
-  optimization_type: string;
-  previous_value: any;
-  new_value: any;
-  created_at: string;
-  stream_id: string;
-}
-
-interface Alert {
-  id: string;
-  message: string;
-  severity: string;
-  alert_type: string;
-  status: string;
-  created_at: string;
+interface OptimizationResult {
+  type: string;
+  impact: number;
+  strategy: string;
+  optimization_id: string;
 }
 
 const RevenueOptimizer = () => {
-  const [optimizations, setOptimizations] = useState<OptimizationHistory[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [loading, setLoading] = useState(true);
   const [optimizing, setOptimizing] = useState(false);
+  const [lastOptimization, setLastOptimization] = useState<any>(null);
+  const [optimizationHistory, setOptimizationHistory] = useState<OptimizationResult[]>([]);
+  const [autoOptimize, setAutoOptimize] = useState(true);
+
+  // Auto-optimization runs every 30 seconds for maximum profitability
+  useEffect(() => {
+    if (autoOptimize) {
+      const interval = setInterval(runOptimization, 30000);
+      return () => clearInterval(interval);
+    }
+  }, [autoOptimize]);
 
   useEffect(() => {
-    loadOptimizationData();
-    const interval = setInterval(loadOptimizationData, 15000);
-    return () => clearInterval(interval);
+    loadOptimizationHistory();
   }, []);
 
-  const loadOptimizationData = async () => {
+  const loadOptimizationHistory = async () => {
     try {
-      const { data: optimizationData } = await supabase
-        .from('autonomous_optimization_history')
+      const { data } = await supabase
+        .from('autonomous_revenue_optimization')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(10);
       
-      const { data: alertsData } = await supabase
-        .from('autonomous_revenue_alerts')
-        .select('*')
-        .eq('status', 'active')
-        .order('created_at', { ascending: false })
-        .limit(5);
-      
-      setOptimizations(optimizationData || []);
-      setAlerts(alertsData || []);
+      setOptimizationHistory(data || []);
+      if (data && data.length > 0) {
+        setLastOptimization(data[0]);
+      }
     } catch (error) {
-      console.error('Error loading optimization data:', error);
-    } finally {
-      setLoading(false);
+      console.error('Error loading optimization history:', error);
     }
   };
 
   const runOptimization = async () => {
+    if (optimizing) return;
+    
     setOptimizing(true);
     try {
-      // Generate revenue for active streams
-      const { error: genError } = await supabase
-        .rpc('generate_autonomous_revenue');
+      toast.info('🎯 Analyzing and optimizing revenue streams for maximum profitability...');
       
-      if (genError) throw genError;
-
-      // Optimize underperforming streams
-      const { error: optError } = await supabase
-        .rpc('optimize_autonomous_revenue_streams');
+      const { data, error } = await supabase.functions.invoke('revenue-optimizer');
       
-      if (optError) throw optError;
-
-      toast.success('🚀 System optimization completed successfully!');
-      loadOptimizationData();
+      if (error) throw error;
+      
+      if (data?.success) {
+        toast.success(`✨ Revenue optimized! Estimated impact: +$${data.total_impact?.toFixed(2)}`);
+        setLastOptimization(data);
+        loadOptimizationHistory();
+      } else {
+        toast.error('Optimization failed');
+      }
     } catch (error) {
       console.error('Optimization error:', error);
-      toast.error('Optimization failed. Please try again.');
+      toast.error('Failed to optimize revenue');
     } finally {
       setOptimizing(false);
     }
   };
 
-  const resolveAlert = async (alertId: string) => {
-    try {
-      const { error } = await supabase
-        .from('autonomous_revenue_alerts')
-        .update({ 
-          status: 'resolved',
-          resolved_at: new Date().toISOString()
-        })
-        .eq('id', alertId);
-
-      if (error) throw error;
-
-      toast.success('Alert resolved');
-      loadOptimizationData();
-    } catch (error) {
-      console.error('Error resolving alert:', error);
-      toast.error('Failed to resolve alert');
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center p-8">
-        <Activity className="h-6 w-6 animate-spin mr-2" />
-        <span>Loading Optimization Engine...</span>
-      </div>
-    );
-  }
+  const totalImpact = optimizationHistory.reduce((sum, opt) => {
+    return sum + (opt.performance_metrics?.impact || 0);
+  }, 0);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-white">Revenue Optimization Engine</h2>
-          <p className="text-slate-400">AI-powered revenue maximization system</p>
-        </div>
-        <Button 
-          onClick={runOptimization}
-          disabled={optimizing}
-          className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700"
-        >
-          {optimizing ? (
-            <Activity className="h-4 w-4 mr-2 animate-spin" />
-          ) : (
-            <Zap className="h-4 w-4 mr-2" />
-          )}
-          {optimizing ? 'Optimizing...' : 'Run Optimization'}
-        </Button>
-      </div>
-
-      {/* Alerts */}
-      {alerts.length > 0 && (
-        <Card className="bg-red-900/20 border-red-500/20">
-          <CardHeader>
-            <CardTitle className="text-red-400 flex items-center">
-              <AlertTriangle className="h-5 w-5 mr-2" />
-              System Alerts ({alerts.length})
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-3">
-              {alerts.map((alert) => (
-                <div 
-                  key={alert.id}
-                  className="flex items-center justify-between p-3 bg-red-900/10 rounded-lg border border-red-500/20"
-                >
-                  <div className="flex items-center">
-                    <AlertTriangle className="h-4 w-4 text-red-400 mr-3" />
-                    <div>
-                      <p className="text-white font-medium">{alert.message}</p>
-                      <p className="text-red-200 text-sm">
-                        {alert.alert_type.replace('_', ' ').toUpperCase()} • {alert.severity.toUpperCase()}
-                      </p>
-                    </div>
-                  </div>
-                  <Button
-                    size="sm"
-                    onClick={() => resolveAlert(alert.id)}
-                    className="bg-red-600 hover:bg-red-700"
-                  >
-                    Resolve
-                  </Button>
-                </div>
-              ))}
+      {/* Main Optimizer Control */}
+      <Card className="bg-gradient-to-br from-emerald-900/20 to-green-800/20 border-emerald-500/20">
+        <CardHeader>
+          <CardTitle className="text-2xl text-emerald-400 flex items-center">
+            <Target className="h-8 w-8 mr-2" />
+            Revenue Optimization Engine
+          </CardTitle>
+          <CardDescription className="text-emerald-200">
+            AI-powered optimization for maximum profitability across all revenue streams
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Control Panel */}
+          <div className="flex items-center justify-between p-4 bg-slate-800/50 rounded-lg">
+            <div className="flex items-center space-x-4">
+              <Button
+                onClick={runOptimization}
+                disabled={optimizing}
+                className="bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-700 hover:to-green-700"
+              >
+                {optimizing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Zap className="h-4 w-4 mr-2" />
+                )}
+                {optimizing ? 'Optimizing...' : 'Optimize Revenue'}
+              </Button>
+              
+              <Button
+                onClick={() => setAutoOptimize(!autoOptimize)}
+                variant={autoOptimize ? "default" : "outline"}
+                className={autoOptimize ? "bg-blue-600 hover:bg-blue-700" : ""}
+              >
+                <Activity className="h-4 w-4 mr-2" />
+                Auto-Optimize: {autoOptimize ? 'ON' : 'OFF'}
+              </Button>
             </div>
-          </CardContent>
-        </Card>
-      )}
+            
+            <div className="text-right">
+              <p className="text-2xl font-bold text-emerald-400">
+                +${totalImpact.toFixed(2)}
+              </p>
+              <p className="text-sm text-emerald-200">Total Revenue Impact</p>
+            </div>
+          </div>
 
-      {/* Optimization Controls */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="bg-green-900/20 border-green-500/20">
-          <CardHeader>
-            <CardTitle className="text-green-400 flex items-center">
-              <TrendingUp className="h-5 w-5 mr-2" />
-              Revenue Boost
-            </CardTitle>
-            <CardDescription className="text-green-200">
-              Enhance high-performing streams
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button className="w-full bg-green-600 hover:bg-green-700">
-              Boost Performance
-            </Button>
-          </CardContent>
-        </Card>
+          {/* Optimization Status */}
+          {lastOptimization && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-3 bg-slate-700/30 rounded-lg">
+                <div className="flex items-center">
+                  <TrendingUp className="h-5 w-5 text-green-400 mr-2" />
+                  <div>
+                    <p className="text-xs text-slate-400">Last Impact</p>
+                    <p className="text-lg font-bold text-green-400">
+                      +${lastOptimization.total_impact?.toFixed(2) || '0.00'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-3 bg-slate-700/30 rounded-lg">
+                <div className="flex items-center">
+                  <Settings className="h-5 w-5 text-blue-400 mr-2" />
+                  <div>
+                    <p className="text-xs text-slate-400">Optimizations</p>
+                    <p className="text-lg font-bold text-blue-400">
+                      {lastOptimization.optimizations?.length || 0}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="p-3 bg-slate-700/30 rounded-lg">
+                <div className="flex items-center">
+                  <BarChart3 className="h-5 w-5 text-purple-400 mr-2" />
+                  <div>
+                    <p className="text-xs text-slate-400">Status</p>
+                    <Badge className="bg-green-600">
+                      {lastOptimization.applied ? 'Applied' : 'Pending'}
+                    </Badge>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
-        <Card className="bg-blue-900/20 border-blue-500/20">
-          <CardHeader>
-            <CardTitle className="text-blue-400 flex items-center">
-              <Target className="h-5 w-5 mr-2" />
-              Strategy Pivot
-            </CardTitle>
-            <CardDescription className="text-blue-200">
-              Redirect underperforming streams
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button className="w-full bg-blue-600 hover:bg-blue-700">
-              Optimize Strategy
-            </Button>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-purple-900/20 border-purple-500/20">
-          <CardHeader>
-            <CardTitle className="text-purple-400 flex items-center">
-              <Settings className="h-5 w-5 mr-2" />
-              Auto-Scaling
-            </CardTitle>
-            <CardDescription className="text-purple-200">
-              Intelligent resource allocation
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button className="w-full bg-purple-600 hover:bg-purple-700">
-              Enable Auto-Scale
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
+          {/* Auto-Optimization Info */}
+          {autoOptimize && (
+            <div className="p-4 bg-gradient-to-r from-blue-900/20 to-purple-900/20 rounded-lg border border-blue-500/20">
+              <div className="flex items-center">
+                <Activity className="h-5 w-5 text-blue-400 mr-3 animate-pulse" />
+                <div>
+                  <h4 className="text-blue-400 font-medium">Auto-Optimization Active</h4>
+                  <p className="text-blue-200 text-sm">
+                    System automatically optimizes every 30 seconds for maximum profitability
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Optimization History */}
       <Card className="bg-slate-800/50 border-slate-700">
@@ -248,60 +205,71 @@ const RevenueOptimizer = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {optimizations.length === 0 ? (
-              <p className="text-slate-400 text-center py-8">
-                No optimizations performed yet. Run your first optimization to see results here.
-              </p>
-            ) : (
-              optimizations.map((opt) => (
-                <div 
-                  key={opt.id}
-                  className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg"
-                >
-                  <div className="flex items-center">
-                    <CheckCircle className="h-4 w-4 text-green-400 mr-3" />
-                    <div>
-                      <p className="text-white font-medium">
-                        {opt.optimization_type.replace('_', ' ').toUpperCase()}
-                      </p>
-                      <p className="text-slate-400 text-sm">
-                        {new Date(opt.created_at).toLocaleString()}
-                      </p>
-                    </div>
+          <div className="space-y-3 max-h-96 overflow-y-auto">
+            {optimizationHistory.slice(0, 10).map((optimization, index) => (
+              <div 
+                key={index}
+                className="flex items-center justify-between p-3 bg-slate-700/30 rounded-lg"
+              >
+                <div className="flex items-center">
+                  <div className="w-2 h-2 rounded-full bg-green-400 mr-3"></div>
+                  <div>
+                    <p className="text-white font-medium capitalize">
+                      {optimization.optimization_type?.replace('_', ' ') || 'General Optimization'}
+                    </p>
+                    <p className="text-slate-400 text-sm">
+                      {optimization.metadata?.strategy || 'Revenue optimization'} • 
+                      {new Date(optimization.created_at).toLocaleTimeString()}
+                    </p>
                   </div>
-                  <Badge variant="secondary" className="bg-green-900/20 text-green-400">
-                    Completed
+                </div>
+                <div className="text-right">
+                  <p className="text-green-400 font-medium">
+                    +${optimization.performance_metrics?.impact?.toFixed(2) || '0.00'}
+                  </p>
+                  <Badge className="bg-green-600 text-xs">
+                    {optimization.status || 'applied'}
                   </Badge>
                 </div>
-              ))
-            )}
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>
 
-      {/* Performance Metrics */}
+      {/* Optimization Strategies */}
       <Card className="bg-slate-800/50 border-slate-700">
         <CardHeader>
-          <CardTitle className="text-white">System Performance Metrics</CardTitle>
+          <CardTitle className="text-white">Active Optimization Strategies</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-400 mb-1">96%</div>
-              <div className="text-sm text-slate-400">Optimization Success Rate</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 bg-gradient-to-r from-emerald-900/20 to-green-900/20 rounded-lg border border-emerald-500/20">
+              <h4 className="text-emerald-400 font-medium mb-2">Dynamic Pricing</h4>
+              <p className="text-emerald-200 text-sm">
+                Automatically adjusts pricing based on demand, competition, and market conditions
+              </p>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-400 mb-1">2.4x</div>
-              <div className="text-sm text-slate-400">Revenue Multiplier</div>
+            
+            <div className="p-4 bg-gradient-to-r from-blue-900/20 to-indigo-900/20 rounded-lg border border-blue-500/20">
+              <h4 className="text-blue-400 font-medium mb-2">Worker Optimization</h4>
+              <p className="text-blue-200 text-sm">
+                Optimizes worker allocation and scaling for maximum efficiency and revenue
+              </p>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-purple-400 mb-1">12s</div>
-              <div className="text-sm text-slate-400">Avg Response Time</div>
+            
+            <div className="p-4 bg-gradient-to-r from-purple-900/20 to-pink-900/20 rounded-lg border border-purple-500/20">
+              <h4 className="text-purple-400 font-medium mb-2">Stream Multipliers</h4>
+              <p className="text-purple-200 text-sm">
+                Applies performance multipliers to high-performing revenue streams
+              </p>
             </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-orange-400 mb-1">99.8%</div>
-              <div className="text-sm text-slate-400">System Uptime</div>
+            
+            <div className="p-4 bg-gradient-to-r from-orange-900/20 to-red-900/20 rounded-lg border border-orange-500/20">
+              <h4 className="text-orange-400 font-medium mb-2">Conversion Optimization</h4>
+              <p className="text-orange-200 text-sm">
+                Optimizes conversion funnels and user experience for maximum revenue
+              </p>
             </div>
           </div>
         </CardContent>
