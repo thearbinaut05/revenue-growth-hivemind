@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,7 +14,8 @@ import {
   Activity,
   CheckCircle,
   AlertCircle,
-  Wrench
+  Wrench,
+  Zap
 } from "lucide-react";
 import { useNavigate } from 'react-router-dom';
 
@@ -205,6 +205,30 @@ const RealTimeBalanceDisplay = () => {
           <Button
             onClick={async () => {
               try {
+                toast.info('Transferring ALL USD from entire database...');
+                const { data, error } = await supabase.functions.invoke('comprehensive-usd-aggregator', { body: {} });
+                if (error) throw error;
+                if (data?.success) {
+                  toast.success(`🎉 SUCCESS: $${data.total_transferred?.toFixed(2)} transferred from entire database!`);
+                  await loadBalances();
+                } else {
+                  toast.error(data?.message || 'Full database transfer failed');
+                }
+              } catch (e) {
+                console.error(e);
+                toast.error('Full database transfer failed');
+              }
+            }}
+            variant="outline"
+            size="sm"
+            className="bg-purple-700 border-purple-600 hover:bg-purple-600"
+          >
+            <ArrowUpRight className="h-4 w-4 mr-2" />
+            Full DB Transfer
+          </Button>
+          <Button
+            onClick={async () => {
+              try {
                 toast.info('Aggregating USD across tables and transferring from Stripe...');
                 const { data, error } = await supabase.functions.invoke('aggregate-usd-to-stripe', { body: {} });
                 if (error) throw error;
@@ -224,7 +248,7 @@ const RealTimeBalanceDisplay = () => {
             className="bg-teal-700 border-teal-600 hover:bg-teal-600"
           >
             <ArrowUpRight className="h-4 w-4 mr-2" />
-            Aggregate & Transfer USD
+            Aggregate USD
           </Button>
           <Button
             onClick={async () => {
@@ -258,6 +282,15 @@ const RealTimeBalanceDisplay = () => {
           >
             <Banknote className="h-4 w-4 mr-2" />
             Full Cash Out
+          </Button>
+          <Button
+            onClick={() => navigate('/full-automation')}
+            variant="outline"
+            size="sm"
+            className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700"
+          >
+            <Zap className="h-4 w-4 mr-2" />
+            Full Automation
           </Button>
           <Button
             onClick={executeTransfer}

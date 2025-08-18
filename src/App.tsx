@@ -7,6 +7,7 @@ import Index from "./pages/Index";
 import NotFound from "./pages/NotFound";
 import RevenueDashboard from "./pages/RevenueDashboard";
 import CashOutPage from "./pages/CashOutPage";
+import FullAutomationPage from "./pages/FullAutomationPage";
 
 const queryClient = new QueryClient();
 
@@ -19,6 +20,7 @@ const App = () => (
           <Route path="/" element={<Index />} />
           <Route path="/revenue" element={<RevenueDashboard />} />
           <Route path="/cash-out" element={<CashOutPage />} />
+          <Route path="/full-automation" element={<FullAutomationPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
