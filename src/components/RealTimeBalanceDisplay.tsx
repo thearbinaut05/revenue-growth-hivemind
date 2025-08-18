@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,6 +17,7 @@ import {
   AlertCircle,
   Wrench
 } from "lucide-react";
+import { useNavigate } from 'react-router-dom';
 
 interface BalanceData {
   application_balance: number;
@@ -32,10 +34,11 @@ const RealTimeBalanceDisplay = () => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [transferring, setTransferring] = useState(false);
+  const navigate = useNavigate();
 
   useEffect(() => {
     loadBalances();
-    const interval = setInterval(loadBalances, 3000); // Update every 3 seconds
+    const interval = setInterval(loadBalances, 3000);
     return () => clearInterval(interval);
   }, []);
 
@@ -78,7 +81,7 @@ const RealTimeBalanceDisplay = () => {
         total_revenue: totalRevenue,
         last_updated: new Date().toISOString(),
         stripe_available: stripeBalanceData?.available || [],
-        transfer_ready: totalTransferAmount >= 5  // Check combined amount
+        transfer_ready: totalTransferAmount >= 5
       });
 
     } catch (error) {
@@ -98,11 +101,9 @@ const RealTimeBalanceDisplay = () => {
   const executeTransfer = async () => {
     setTransferring(true);
     try {
-      // Step 1: Move revenue to application balance if there's revenue
+      toast.info('📊 Step 1: Moving revenue to application balance...');
+      
       if (balances?.total_revenue && balances.total_revenue > 0) {
-        toast.info('📊 Step 1: Moving revenue to application balance...');
-        
-        // Insert revenue into application balance
         const { error: revenueTransferError } = await supabase
           .from('application_balance')
           .update({ 
@@ -115,14 +116,12 @@ const RealTimeBalanceDisplay = () => {
           throw new Error(`Failed to move revenue: ${revenueTransferError.message}`);
         }
 
-        // Mark revenue transactions as transferred
         await supabase
           .from('autonomous_revenue_transactions')
           .update({ status: 'transferred' })
           .eq('status', 'completed');
       }
 
-      // Step 2: Transfer from application balance to bank
       toast.info('🏦 Step 2: Transferring to bank account...');
       const { data, error } = await supabase.functions.invoke('stripe-revenue-transfer');
       
@@ -139,7 +138,7 @@ const RealTimeBalanceDisplay = () => {
     } catch (error) {
       console.error('Transfer error:', error);
       toast.error('Transfer failed - please check your Stripe configuration');
-      await loadBalances(); // Refresh to show current state
+      await loadBalances();
     } finally {
       setTransferring(false);
     }
@@ -250,6 +249,15 @@ const RealTimeBalanceDisplay = () => {
           >
             <ArrowUpRight className="h-4 w-4 mr-2" />
             Payout to Bank
+          </Button>
+          <Button
+            onClick={() => navigate('/cash-out')}
+            variant="outline"
+            size="sm"
+            className="bg-purple-700 border-purple-600 hover:bg-purple-600"
+          >
+            <Banknote className="h-4 w-4 mr-2" />
+            Full Cash Out
           </Button>
           <Button
             onClick={executeTransfer}
